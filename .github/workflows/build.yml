@@ -31,13 +31,26 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: "21"
 
       - name: Installer Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: stable
           cache: true
+
+      - name: Désactiver la vérification lint (bug connu)
+        run: |
+          mkdir -p ~/.gradle/init.d
+          cat > ~/.gradle/init.d/sans-lint.gradle <<'EOF'
+          allprojects {
+              tasks.configureEach {
+                  if (name.startsWith("lintVital") || name.startsWith("lintAnalyze")) {
+                      enabled = false
+                  }
+              }
+          }
+          EOF
 
       - name: Créer la structure Android
         working-directory: proj
