@@ -1,0 +1,78 @@
+name: Compiler l'APK
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Récupérer le dépôt
+        uses: actions/checkout@v4
+
+      - name: Vérifier les fichiers
+        run: |
+          test -f app.zip || { echo "Error: app.zip manquant à la racine du dépôt"; exit 1; }
+          test -f google-services.json || { echo "Error: google-services.json manquant à la racine du dépôt"; exit 1; }
+          grep -q 'com.adua.bons_adua' google-services.json || { echo "Error: google-services.json ne correspond pas au package com.adua.bons_adua"; exit 1; }
+
+      - name: Décompresser le projet
+        run: |
+          mkdir proj
+          unzip -q app.zip -d proj
+          test -f proj/pubspec.yaml || { echo "Error: pubspec.yaml introuvable à la racine de app.zip"; exit 1; }
+
+      - name: Installer Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Installer Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Créer la structure Android
+        working-directory: proj
+        run: flutter create --platforms=android --org com.adua --project-name bons_adua .
+
+      - name: Configurer Firebase et minSdk
+        working-directory: proj
+        run: |
+          cp ../google-services.json android/app/google-services.json
+          python3 tools/patch_android.py
+
+      - name: Télécharger les dépendances
+        working-directory: proj
+        run: flutter pub get
+
+      - name: Compiler les APK
+        working-directory: proj
+        run: flutter build apk --release --split-per-abi
+
+      - name: Renommer les APK
+        working-directory: proj/build/app/outputs/flutter-apk
+        run: |
+          mv app-armeabi-v7a-release.apk bons-adua-arm32.apk
+          mv app-arm64-v8a-release.apk bons-adua-arm64.apk
+          rm -f app-x86_64-release.apk
+          ls -l
+
+      - name: Publier dans Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: "Build ${{ github.run_number }}"
+          body: |
+            bons-adua-arm32.apk : téléphones 32 bits (Samsung Galaxy A03 Core).
+            bons-adua-arm64.apk : téléphones récents 64 bits.
+          files: |
+            proj/build/app/outputs/flutter-apk/bons-adua-arm32.apk
+            proj/build/app/outputs/flutter-apk/bons-adua-arm64.apk
