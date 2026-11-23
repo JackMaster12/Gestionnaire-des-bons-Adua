@@ -1,0 +1,78 @@
+name: Compiler Windows
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - name: Récupérer le dépôt
+        uses: actions/checkout@v4
+
+      - name: Vérifier les fichiers
+        shell: pwsh
+        run: |
+          if (-not (Test-Path app.zip)) { Write-Output "Error: app.zip manquant à la racine du dépôt"; exit 1 }
+          if (-not (Test-Path google-services.json)) { Write-Output "Error: google-services.json manquant à la racine du dépôt"; exit 1 }
+
+      - name: Décompresser le projet
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force proj | Out-Null
+          Expand-Archive -Path app.zip -DestinationPath proj -Force
+          if (-not (Test-Path proj/pubspec.yaml)) { Write-Output "Error: pubspec.yaml introuvable à la racine de app.zip"; exit 1 }
+
+      - name: Installer Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Créer la structure Windows
+        working-directory: proj
+        shell: pwsh
+        run: |
+          flutter config --enable-windows-desktop
+          flutter create --platforms=windows --org com.adua --project-name bons_adua .
+
+      - name: Adapter le projet pour Windows (SQLite + synchronisation)
+        working-directory: proj
+        shell: pwsh
+        run: |
+          Copy-Item ../google-services.json ./google-services.json
+          python tools/patch_windows.py
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Compiler l'application Windows
+        working-directory: proj
+        shell: pwsh
+        run: flutter build windows --release
+
+      - name: Préparer le dossier à installer
+        shell: pwsh
+        run: |
+          $dossier = "proj/build/windows/x64/runner/Release"
+          if (-not (Test-Path $dossier)) { Write-Output "Error: dossier de compilation introuvable"; exit 1 }
+          foreach ($dll in "msvcp140.dll","vcruntime140.dll","vcruntime140_1.dll") {
+            $src = Join-Path $env:WINDIR "System32\$dll"
+            if (Test-Path $src) { Copy-Item $src $dossier -Force }
+          }
+          Rename-Item "$dossier/bons_adua.exe" "BonsADUA.exe"
+          Set-Content -Path "$dossier/LISEZMOI.txt" -Value "Bons ADUA pour Windows 10 (64 bits).`r`nDecompressez tout le dossier, puis double-cliquez sur BonsADUA.exe.`r`nNe deplacez pas BonsADUA.exe seul : il a besoin des autres fichiers du dossier."
+          Compress-Archive -Path "$dossier/*" -DestinationPath "bons-adua-windows-x64.zip" -Force
+
+      - name: Publier dans Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: windows-${{ github.run_number }}
+          name: "Windows ${{ github.run_number }}"
+          body: |
+            bons-adua-windows-x64.zip : application Windows 10 (64 bits). Décompresser puis lancer BonsADUA.exe.
+          files: |
+            bons-adua-windows-x64.zip
